@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+<ItemGroup>
+  <Compile Include="Init.fs" />
+  <Compile Include="Types.fs" />
+  <Compile Include="Db.fs" />
+  <Compile Include="RDesktop.fs" />
+  <Compile Include="AnyDesk.fs" />
+  <Compile Include="WinFormsApp.fs" />
+  <Compile Include="Startup.fs" />
+</ItemGroup>
+</Project>
