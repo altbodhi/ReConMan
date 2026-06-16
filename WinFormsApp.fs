@@ -119,11 +119,7 @@ type App(xs: list<RemotePoint>) as x =
         let dt = new DataTable("dt")
 
         let dg =
-            new DataGridView(
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                ReadOnly = true
-            )
+            new DataGridView(AllowUserToAddRows = false, AllowUserToDeleteRows = false, ReadOnly = true)
 
         let connect () =
             if dg.CurrentRow = null then
@@ -175,7 +171,8 @@ type App(xs: list<RemotePoint>) as x =
                     row["ConId"] <- cid
                     dt.Rows.Add row
 
-            dg.DataSource <- dt
+            dg.AutoSizeColumnsMode <- DataGridViewAutoSizeColumnsMode.Fill
+          
             dg.AutoResizeColumns()
 
             add.Click.Add(fun _ ->
@@ -271,6 +268,14 @@ type App(xs: list<RemotePoint>) as x =
             let mf = x.MainForm
             mf.FormClosed.Add(fun _ -> x.StopApp())
             mf.Controls.Add dg
+            let bs =  new BindingSource(DataSource = dt)
+            let bn = new BindingNavigator()
+            bn.AddStandardItems()
+            bn.Items.RemoveAt(bn.Items.Count - 1)
+            bn.Items.RemoveAt(bn.Items.Count - 1)
+            bn.BindingSource <- bs
+            dg.DataSource <- bs
+            mf.Controls.Add(bn)
             dg.Dock <- DockStyle.Fill
             mf.MainMenuStrip <- mainMenu
             mf.MainMenuStrip |> mf.Controls.Add
