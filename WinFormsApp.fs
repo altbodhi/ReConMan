@@ -1,9 +1,10 @@
 module ReConMan.WinFormsApp
 
-open System
+
 open System.Data
 open System.Windows.Forms
 open ReConMan
+open ReConMan.Types
 
 type DialogButtons(dialog: Form) as x =
     class
@@ -60,8 +61,8 @@ type EditConnection(name, ct, conId, pass) as x =
         let dialog = new DialogButtons(x)
 
         do
-            conType.Items.Add("AnyDesk") |> ignore
-            conType.Items.Add("RDesktop") |> ignore
+            conType.Items.Add(TypeOfCon.AnyDesk.ToString()) |> ignore
+            conType.Items.Add(TypeOfCon.RDesktop.ToString()) |> ignore
             conType.SelectedItem <- ct
             x.StartPosition <- FormStartPosition.CenterParent
             x.Text <- "New Connection"
@@ -87,7 +88,18 @@ type EditConnection(name, ct, conId, pass) as x =
         member x.Name = name.Text
         member x.ConId = conId.Text
         member x.Pass = pass.Text
-        member x.ConType = conType.SelectedItem
+
+        member x.AsConnectionType() =
+            match x.ConType with
+            | TypeOfCon.AnyDesk -> ConnectType.AnyDesk(x.ConId, x.Pass)
+            | TypeOfCon.RDesktop -> ConnectType.RDesktop(x.ConId, x.Pass)
+            | TypeOfCon.None
+            | _ -> ConnectType.None
+
+        member x.ConType =
+            match TypeOfCon.TryParse<TypeOfCon>(conType.SelectedItem.ToString()) with
+            | true, x -> x
+            | false, _ -> TypeOfCon.None
     end
 
 let authorize () =
@@ -99,31 +111,37 @@ let authorize () =
     else
         false
 
-type App(dt: DataTable) as x =
+type App(xs: list<RemotePoint>) as x =
     class
         inherit ApplicationContext()
+        let mutable items = xs
+        let dt = new DataTable("dt")
 
         let dg =
-            new DataGridView(
-                DataSource = dt,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                ReadOnly = true
-            )
+            new DataGridView(AllowUserToAddRows = false, AllowUserToDeleteRows = false, ReadOnly = true)
 
-        let connect ct =
+        let connect () =
             if dg.CurrentRow = null then
                 ()
             else
-                let id = dg.CurrentRow.Cells["id"].Value.ToString()
-                let rows = dt.Select($"id = '{id}' AND kind='{ct}'")
+                let id = dg.CurrentRow.Cells["Name"].Value.ToString()
+                let kind = dg.CurrentRow.Cells["Kind"].Value.ToString()
+                let conId = dg.CurrentRow.Cells["ConId"].Value.ToString()
+                let point = items |> List.find (fun x -> x._id = id)
 
-                if rows.Length = 1 then
-                    let row = rows |> Array.item 0
-                    let conId = row.Item("con_id").ToString()
-                    let pass = row.Item("pass").ToString()
+                let (k, c, p) =
+                    point.connections
+                    |> List.map Db.asStr
+                    |> List.find (fun (k, c, p) -> k = kind && c = conId)
+
+                if k = TypeOfCon.AnyDesk.ToString() then
+                    let ex = Init.anydeskExecutable ()
+                    AnyDesk.run ex conId p |> ignore
+                else if k = TypeOfCon.RDesktop.ToString() then
                     let ex = Init.rdesktopExecutable ()
-                    RDesktop.run ex conId pass |> ignore
+                    RDesktop.run ex conId p |> ignore
+                else
+                    ()
 
         let mainMenu = new MenuStrip()
 
@@ -135,71 +153,126 @@ type App(dt: DataTable) as x =
         let edit = editMenu.DropDownItems.Add("&Edit")
         let delete = editMenu.DropDownItems.Add("&Delete")
 
-        let conMenu =
-            mainMenu.Items.Add(new ToolStripMenuItem("&Connect"))
-            |> fun i -> mainMenu.Items.Item(i) :?> ToolStripMenuItem
-
-        let rd = conMenu.DropDownItems.Add("&RDesktop")
-        let an = conMenu.DropDownItems.Add("&AnyDesk")
-
-        let quit = mainMenu.Items.Add("&Quit")
+        let conMenu = mainMenu.Items.Add("&Connect")
+        let changePass = mainMenu.Items.Add("&Password")
 
         do
+            dt.Columns.Add("Name") |> ignore
+            dt.Columns.Add("Kind") |> ignore
+            dt.Columns.Add("ConId") |> ignore
 
-            dg.DataBindingComplete.Add(fun _ -> dg.Columns["pass"].Visible <- false)
+            for i in items do
+                for c in i.connections do
+                    let row = dt.NewRow()
+                    let (kind, cid, _) = Db.asStr c
+                    row["Name"] <- i._id
+                    row["Kind"] <- kind
+                    row["ConId"] <- cid
+                    dt.Rows.Add row
+
+            dg.DataBindingComplete.Add(fun _ -> dg.ClearSelection())
+            dg.SelectionMode <- DataGridViewSelectionMode.FullRowSelect
+            dg.DataSource <- dt
+            dg.AutoResizeColumns()
 
             add.Click.Add(fun _ ->
-                use frm = new EditConnection("", "AnyDesk", "", "")
+                use frm = new EditConnection("", TypeOfCon.AnyDesk.ToString(), "", "")
 
                 if frm.Accept() then
-                    dt.Rows.Add([| box frm.Name; box frm.ConType; box frm.ConId; box frm.Pass |])
-                    |> ignore)
+                    let con = frm.AsConnectionType()
+                    let rp: RemotePoint option = items |> List.tryFind (fun x -> x._id = frm.Name)
+
+                    items <-
+                        match rp with
+                        | Some v ->
+                            { v with
+                                connections = con :: v.connections }
+                            :: (items |> List.filter (fun x -> x._id <> v._id))
+                        | _ ->
+                            { RemotePoint._id = frm.Name
+                              connections = [ con ] }
+                            :: items
+
+                    dt.Rows.Add([| box frm.Name; box frm.ConType; box frm.ConId |]) |> ignore)
 
             edit.Click.Add(fun _ ->
                 if dg.CurrentRow = null then
                     ()
                 else
-                    let cells = dg.CurrentRow.Cells
+                    let _id = dg.CurrentRow.Cells["Name"].Value.ToString()
+                    let conid = dg.CurrentRow.Cells["ConId"].Value.ToString()
+                    let rp = items |> List.find (fun x -> x._id = _id)
 
-                    use frm =
-                        new EditConnection(
-                            cells["id"].Value.ToString(),
-                            cells["kind"].Value.ToString(),
-                            cells["con_id"].Value.ToString(),
-                            cells["pass"].Value.ToString()
-                        )
+                    let (kind, cid, pwd) =
+                        rp.connections
+                        |> List.find (fun x -> let (kind, cid, pwd) = Db.asStr x in cid = conid)
+                        |> Db.asStr
+
+                    use frm = new EditConnection(rp._id, kind, cid, pwd)
 
                     if frm.Accept() then
-                        dt.Rows.Add([| box frm.Name; box frm.ConType; box frm.ConId; box frm.Pass |])
-                        |> ignore)
+                        let nc = frm.AsConnectionType()
+
+                        items <-
+                            items
+                            |> List.map (function
+                                | x when x._id = _id ->
+                                    { x with
+                                        _id = frm.Name
+                                        connections =
+                                            x.connections
+                                            |> List.map (function
+                                                | AnyDesk(i, p) when i = conid -> nc
+                                                | RDesktop(i, p) when i = conid -> nc
+                                                | a -> a) }
+                                | x -> x)
+
+                        dg.CurrentRow.Cells["Name"].Value <- frm.Name
+                        dg.CurrentRow.Cells["Kind"].Value <- frm.ConType.ToString()
+                        dg.CurrentRow.Cells["ConId"].Value <- frm.ConId)
 
             delete.Click.Add(fun _ ->
                 if dg.CurrentRow = null then
                     ()
                 else if MessageBox.Show("delete item?", "Warning", MessageBoxButtons.YesNo) = DialogResult.Yes then
+                    let _id = dg.CurrentRow.Cells["Name"].Value.ToString()
+                    let conId = dg.CurrentRow.Cells["ConId"].Value.ToString()
+
+                    items <-
+                        items
+                        |> List.map (function
+                            | x when x._id = _id ->
+                                { x with
+                                    connections =
+                                        x.connections
+                                        |> List.filter (function
+                                            | AnyDesk(i, p) when i = conId -> false
+                                            | RDesktop(i, p) when i = conId -> false
+                                            | a -> true) }
+                            | x -> x)
+
                     dg.Rows.Remove(dg.CurrentRow))
 
-            rd.Click.Add(fun _ -> connect "RDesktop")
-            an.Click.Add(fun _ -> connect "AnyDesk")
+            conMenu.Click.Add(fun _ -> connect ())
 
             x.MainForm <-
                 new Form(
                     Text = "Remote Connection Manager v1",
                     Width = 800,
                     Height = 600,
-                    StartPosition = FormStartPosition.CenterScreen,
-                    ControlBox = false
+                    StartPosition = FormStartPosition.CenterScreen
                 )
 
             let mf = x.MainForm
+            mf.FormClosed.Add(fun _ -> x.StopApp())
             mf.Controls.Add dg
             dg.Dock <- DockStyle.Fill
             mf.MainMenuStrip <- mainMenu
             mf.MainMenuStrip |> mf.Controls.Add
-            quit.Click |> Event.add (fun _ -> x.StopApp())
+            changePass.Click |> Event.add (fun _ -> authorize () |> ignore)
 
         member x.StopApp() =
-            Db.writeTable dt "data.edb" Db.password
+            Db.writeTable items "data.edb" Db.password
             Application.Exit()
 
         static member Run() =

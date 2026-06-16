@@ -4,16 +4,19 @@ open System.Data
 open System.Text
 open System.Security.Cryptography
 open System.IO
+open ReConMan.Types
+open System.Text.Json
+open System.Text.Json.Serialization
+
+let options = JsonFSharpOptions.Default().ToJsonSerializerOptions()
+
+let asStr (x: ConnectType) =
+    match x with
+    | RDesktop(a, b) -> (TypeOfCon.RDesktop.ToString(), a, b)
+    | AnyDesk(a, b) -> (TypeOfCon.AnyDesk.ToString(), a, b)
+    | None -> (TypeOfCon.None.ToString(), "", "")
 
 let mutable password = ""
-
-let makeTable () =
-    let dt = new DataTable("connections")
-    dt.Columns.Add "id" |> ignore
-    dt.Columns.Add "kind" |> ignore
-    dt.Columns.Add "con_id" |> ignore
-    dt.Columns.Add "pass" |> ignore
-    dt
 
 let createEas (password: string) =
     let eas = Aes.Create()
@@ -30,13 +33,13 @@ let decr password =
     let eas = createEas password
     eas.CreateDecryptor()
 
-let writeTable (dt: DataTable) path password =
+let writeTable (dt: list<RemotePoint>) path password =
 
-    use fs = File.OpenWrite(path)
+    use fs = File.Create(path)
 
     use cs = new CryptoStream(fs, enc password, CryptoStreamMode.Write)
 
-    dt.WriteXml(cs)
+    JsonSerializer.Serialize(cs, dt, options)
     cs.FlushFinalBlock()
 
 
@@ -45,9 +48,7 @@ let readTable path password =
         use rs = File.OpenRead(path)
 
         use ds = new CryptoStream(rs, decr password, CryptoStreamMode.Read)
-        let dt = makeTable ()
 
-        dt.ReadXml ds |> ignore
-        dt
+        JsonSerializer.Deserialize<list<RemotePoint>>(ds, options)
     else
-        makeTable ()
+        []

@@ -1,6 +1,7 @@
 namespace ReConMan.Types
 
 type TypeOfCon =
+    | None = 0
     | AnyDesk = 1
     | RDesktop = 2
 
