@@ -5,6 +5,7 @@ open System.Data
 open System.Windows.Forms
 open ReConMan
 open ReConMan.Types
+open System.ComponentModel
 
 type DialogButtons(dialog: Form) as x =
     class
@@ -118,7 +119,11 @@ type App(xs: list<RemotePoint>) as x =
         let dt = new DataTable("dt")
 
         let dg =
-            new DataGridView(AllowUserToAddRows = false, AllowUserToDeleteRows = false, ReadOnly = true)
+            new DataGridView(
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                ReadOnly = true
+            )
 
         let connect () =
             if dg.CurrentRow = null then
@@ -161,7 +166,7 @@ type App(xs: list<RemotePoint>) as x =
             dt.Columns.Add("Kind") |> ignore
             dt.Columns.Add("ConId") |> ignore
 
-            for i in items do
+            for i in items |> List.sortBy _._id do
                 for c in i.connections do
                     let row = dt.NewRow()
                     let (kind, cid, _) = Db.asStr c
@@ -170,13 +175,12 @@ type App(xs: list<RemotePoint>) as x =
                     row["ConId"] <- cid
                     dt.Rows.Add row
 
-            dg.DataBindingComplete.Add(fun _ -> dg.ClearSelection())
-            dg.SelectionMode <- DataGridViewSelectionMode.FullRowSelect
             dg.DataSource <- dt
             dg.AutoResizeColumns()
 
             add.Click.Add(fun _ ->
                 use frm = new EditConnection("", TypeOfCon.AnyDesk.ToString(), "", "")
+                frm.Owner <- x.MainForm
 
                 if frm.Accept() then
                     let con = frm.AsConnectionType()
@@ -209,6 +213,7 @@ type App(xs: list<RemotePoint>) as x =
                         |> Db.asStr
 
                     use frm = new EditConnection(rp._id, kind, cid, pwd)
+                    frm.Owner <- x.MainForm
 
                     if frm.Accept() then
                         let nc = frm.AsConnectionType()
